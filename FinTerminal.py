@@ -1,6 +1,5 @@
 import streamlit as st
 import numpy as np
-import sqlite3
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
@@ -78,58 +77,21 @@ st.markdown("""
 # Utilizziamo sqlite3 per garantire che i dati dell'utente rimangano locali.
 # La connessione è configurata per gestire thread multipli in ambiente Streamlit.
 
+# ==============================================================================
+# 2. STRATO DI PERSISTENZA: CONNESSIONE SUPABASE
+# ==============================================================================
+from supabase import create_client
+
+@st.cache_resource
 def connect_to_db():
-    """Stabilisce la connessione al database locale finance.db."""
-    try:
-        conn = sqlite3.connect("finance.db", check_same_thread=False)
-        return conn
-    except sqlite3.Error as e:
-        st.error(f"Errore di connessione al database: {e}")
-        return None
+    """Restituisce il client Supabase."""
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-def initialize_database_schema():
-    """Crea le tabelle necessarie se non sono già presenti nel file .db."""
-    connection = connect_to_db()
-    if connection:
-        cursor = connection.cursor()
-        
-        # Tabella per lo storico patrimoniale mensile
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS storico (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data TEXT NOT NULL UNIQUE,
-                pac REAL DEFAULT 0,
-                risparmio REAL DEFAULT 0,
-                capitale REAL DEFAULT 0
-            )
-        """)
-        
-        # Tabella per le impostazioni dell'utente (chiave-valore)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS impostazioni (
-                chiave TEXT PRIMARY KEY,
-                valore REAL
-            )
-        """)
-        
-        # Tabella per il registro delle transazioni finanziarie
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transazioni (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data TEXT NOT NULL,
-                asset TEXT NOT NULL,
-                piattaforma TEXT,
-                importo REAL NOT NULL,
-                tipo TEXT NOT NULL,
-                quantita REAL DEFAULT 0,
-                prezzo_carico REAL DEFAULT 0
-            )
-        """)
-        connection.commit()
-        connection.close()
-
-# Eseguiamo l'inizializzazione all'avvio dell'app
-initialize_database_schema()
+# ==============================================================================
+# 3. LIBRERIA DI FUNZIONI TECNICHE & LOGICA DI CALCOLO
+# ==============================================================================
 
 # ==============================================================================
 # 3. LIBRERIA DI FUNZIONI TECNICHE & LOGICA DI CALCOLO
@@ -137,20 +99,38 @@ initialize_database_schema()
 
 def update_setting(key, value):
     """Aggiorna o inserisce un parametro di configurazione nel DB."""
-    conn = connect_to_db()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO impostazioni (chiave, valore) VALUES (?, ?)", (key, float(value)))
-    conn.commit()
-    conn.close()
+    supabase = connect_to_db()
+    supabase.table("impostazioni").upsert({"chiave": key, "valore": float(value)}).execute()
 
 def fetch_setting(key, default_val):
     """Recupera un parametro di configurazione specifico dal DB."""
-    conn = connect_to_db()
-    c = conn.cursor()
-    c.execute("SELECT valore FROM impostazioni WHERE chiave = ?", (key,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else default_val
+    supabase = connect_to_db()
+    result = supabase.table("impostazioni").select("valore").eq("chiave", key).execute()
+    if result.data:
+        return result.data[0]["valore"]
+    return default_val
+
+def get_mortgage_payment(principal, annual_rate, years):
+    """Calcola la rata mensile (Ammortamento Francese)."""
+    if principal <= 0 or annual_rate < 0 or years <= 0:
+        return 0.0
+    monthly_rate = (annual_rate / 100) / 12
+    total_payments = years * 12
+    if monthly_rate == 0:
+        return principal / total_payments
+    return principal * (monthly_rate * (1 + monthly_rate)**total_payments) / ((1 + monthly_rate)**total_payments - 1)
+
+@st.cache_data(ttl=3600)
+def fetch_market_data(ticker_symbol, duration="1y"):
+    """Recupera dati storici da Yahoo Finance con sistema di caching."""
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        history = ticker.history(period=duration)
+        if history.empty:
+            return None
+        return history
+    except Exception:
+        return None
 
 def get_mortgage_payment(principal, annual_rate, years):
     """Calcola la rata mensile (Ammortamento Francese)."""
@@ -210,10 +190,9 @@ with st.sidebar:
 if nav_selection == "📊 Dashboard Patrimoniale":
     st.title("📊 Riepilogo Esecutivo del Patrimonio")
     
-    conn = connect_to_db()
-    query = "SELECT data, risparmio, capitale FROM storico ORDER BY data ASC"
-    df_history = pd.read_sql_query(query, conn)
-    conn.close()
+    supabase = connect_to_db()
+    result = supabase.table("storico").select("data, risparmio, capitale").order("data", desc=False).execute()
+    df_history = pd.DataFrame(result.data)
     
     if not df_history.empty:
         df_history['data'] = pd.to_datetime(df_history['data'])
@@ -260,12 +239,9 @@ if nav_selection == "📊 Dashboard Patrimoniale":
 
         with st.expander("🔍 Visualizza Dettaglio Tabellare", expanded=True):
             try:
-                conn = connect_to_db()
-                df_detail = pd.read_sql_query(
-                    "SELECT rowid AS rowid, id, data, risparmio, capitale FROM storico ORDER BY data DESC", 
-                    conn
-                )
-                conn.close()
+                supabase = connect_to_db()
+                result = supabase.table("storico").select("id, data, risparmio, capitale").order("data", desc=True).execute()
+                df_detail = pd.DataFrame(result.data)
 
                 if not df_detail.empty:
                     # Header colonne
@@ -283,13 +259,13 @@ if nav_selection == "📊 Dashboard Patrimoniale":
                         c2.write(f"{row['risparmio']:,.2f} €")
                         c3.write(f"{row['capitale']:,.2f} €")
                         with c_del:
-                            if st.button("🗑️", key=f"del_dash_{row['rowid']}"):
-                                st.session_state.confirm_delete_nw_id = row['rowid']
+                            if st.button("🗑️", key=f"del_dash_{row['id']}"):
+                                st.session_state.confirm_delete_nw_id = row['id']
 
                     # Pop-up conferma
                     if st.session_state.confirm_delete_nw_id is not None:
                         target_id = st.session_state.confirm_delete_nw_id
-                        row_info = df_detail[df_detail['rowid'] == target_id].iloc[0]
+                        row_info = df_detail[df_detail['id'] == target_id].iloc[0]
                         st.warning(
                             f"⚠️ Sei sicuro di voler eliminare questo record?\n\n"
                             f"**{row_info['data']}** | Risparmio: **{row_info['risparmio']:,.2f} €** | "
@@ -298,20 +274,21 @@ if nav_selection == "📊 Dashboard Patrimoniale":
                         conf1, conf2, _ = st.columns([1, 1, 5])
                         with conf1:
                             if st.button("✅ Sì, elimina", key="conf_del_nw", type="primary"):
-                                conn = connect_to_db()
-                                conn.execute("DELETE FROM storico WHERE rowid = ?", (target_id,))
-                                conn.commit()
-                                conn.close()
+                                supabase = connect_to_db()
+                                supabase.table("storico").delete().eq("id", target_id).execute()
                                 st.session_state.confirm_delete_nw_id = None
                                 st.rerun()
                         with conf2:
                             if st.button("❌ Annulla", key="annulla_del_nw"):
                                 st.session_state.confirm_delete_nw_id = None
                                 st.rerun()
-                    
 
             except Exception as e:
                 st.error(f"Errore nel dettaglio: {e}")
+                
+    else:
+        st.info("Benvenuto! Inizia inserendo il tuo primo record nel tab 'Mercati & Investimenti'.")
+        st.write("Questo terminale ti aiuterà a tracciare la tua crescita finanziaria nel tempo.")
 
 # ==============================================================================
 # 6. MODULO: ANALISI IMMOBILIARE (PAGINA 2)
@@ -397,7 +374,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
     import plotly.express as px
     import plotly.graph_objects as go
     from datetime import datetime, timedelta
-    import sqlite3
     import requests
 
     # --- 2. CORE STYLE ENGINE (CSS CUSTOMIZZATO) ---
@@ -436,7 +412,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
     st.title("📈 Centro Operativo Investimenti")
     st.markdown("---")
 
-    # --- 3. ARCHITETTURA TABBING (STRUTTURA AD ALTA DENSITÀ) ---
+    # --- 3. ARCHITETTURA TABBING ---
     tab_reg, tab_live, tab_scan, tab_ai, tab_fire = st.tabs([
         "📥 Registro & Storico", 
         "💹 Market Live", 
@@ -445,7 +421,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
         "🏝️ Obiettivo FIRE"
     ])
 
-    # --- 4. TAB 1: REGISTRO E CANCELLAZIONE (LOGICA DB ESTESA) ---
+    # --- 4. TAB 1: REGISTRO E CANCELLAZIONE ---
     with tab_reg:
         st.subheader("📝 Gestione Transazioni e Movimenti")
         with st.form("form_mercati_advanced", clear_on_submit=True):
@@ -463,14 +439,23 @@ elif nav_selection == "📈 Mercati & Investimenti":
             f_note = st.text_area("Note Operative / Strategia")
             if st.form_submit_button("✅ ARCHIVIA E SINCRONIZZA DATABASE"):
                 try:
-                    conn = connect_to_db(); cur = conn.cursor()
-                    cur.execute("INSERT INTO transazioni (data, asset, piattaforma, importo, tipo) VALUES (?,?,?,?,?)",
-                               (f_date.strftime("%Y-%m-%d"), f_ticker, f_broker, f_val, f_type))
-                    cur.execute("INSERT OR REPLACE INTO storico (data, risparmio, capitale) VALUES (?,?,?)",
-                               (f_date.strftime("%Y-%m-%d"), f_val if f_type=="Risparmio Mensile" else 0, f_nw))
-                    conn.commit(); conn.close()
-                    st.success(f"Dati per {f_ticker} salvati correttamente."); st.rerun()
-                except Exception as e: st.error(f"Errore critico DB: {e}")
+                    supabase = connect_to_db()
+                    supabase.table("transazioni").insert({
+                        "data": f_date.strftime("%Y-%m-%d"),
+                        "asset": f_ticker,
+                        "piattaforma": f_broker,
+                        "importo": f_val,
+                        "tipo": f_type
+                    }).execute()
+                    supabase.table("storico").upsert({
+                        "data": f_date.strftime("%Y-%m-%d"),
+                        "risparmio": f_val if f_type == "Risparmio Mensile" else 0,
+                        "capitale": f_nw
+                    }).execute()
+                    st.success(f"Dati per {f_ticker} salvati correttamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Errore critico DB: {e}")
 
         st.divider()
         st.subheader("📜 Storico Operazioni Recenti")
@@ -480,9 +465,10 @@ elif nav_selection == "📈 Mercati & Investimenti":
             st.session_state.confirm_delete_id = None
 
         try:
-            conn = connect_to_db()
-            df_ops = pd.read_sql_query("SELECT rowid AS rowid, id, data, asset, piattaforma, importo, tipo FROM transazioni ORDER BY data DESC LIMIT 40", conn)
-            conn.close()
+            supabase = connect_to_db()
+            result = supabase.table("transazioni").select("id, data, asset, piattaforma, importo, tipo").order("data", desc=True).limit(40).execute()
+            df_ops = pd.DataFrame(result.data)
+
             if not df_ops.empty:
                 for idx, row in df_ops.iterrows():
                     c_info, c_del = st.columns([9, 1])
@@ -492,14 +478,13 @@ elif nav_selection == "📈 Mercati & Investimenti":
                             <b>{row['importo']:,.2f} €</b> ({row['piattaforma']})
                         </div>""", unsafe_allow_html=True)
                     with c_del:
-                        if st.button("🗑️", key=f"del_tr_{row['rowid']}"):
-                            st.session_state.confirm_delete_id = row['rowid']
+                        if st.button("🗑️", key=f"del_tr_{row['id']}"):
+                            st.session_state.confirm_delete_id = row['id']
 
-                # Pop-up di conferma (appare sotto la lista)
+                # Pop-up di conferma
                 if st.session_state.confirm_delete_id is not None:
                     target_id = st.session_state.confirm_delete_id
-                    # Recupera info sull'operazione da cancellare per mostrarla nel popup
-                    row_info = df_ops[df_ops['rowid'] == target_id].iloc[0]
+                    row_info = df_ops[df_ops['id'] == target_id].iloc[0]
                     st.warning(
                         f"⚠️ Sei sicuro di voler eliminare questa operazione?\n\n"
                         f"**{row_info['data']}** | {row_info['tipo']} — "
@@ -507,15 +492,13 @@ elif nav_selection == "📈 Mercati & Investimenti":
                     )
                     conf_col1, conf_col2, _ = st.columns([1, 1, 5])
                     with conf_col1:
-                        if st.button("✅ Sì, elimina", type="primary"):
-                            conn = connect_to_db()
-                            conn.execute("DELETE FROM transazioni WHERE rowid = ?", (target_id,))
-                            conn.commit()
-                            conn.close()
+                        if st.button("✅ Sì, elimina", key="conf_del_tr", type="primary"):
+                            supabase = connect_to_db()
+                            supabase.table("transazioni").delete().eq("id", target_id).execute()
                             st.session_state.confirm_delete_id = None
                             st.rerun()
                     with conf_col2:
-                        if st.button("❌ Annulla"):
+                        if st.button("❌ Annulla", key="annulla_del_tr"):
                             st.session_state.confirm_delete_id = None
                             st.rerun()
 
@@ -524,9 +507,8 @@ elif nav_selection == "📈 Mercati & Investimenti":
         except Exception as e:
             st.error(f"Errore tecnico nello storico: {e}")
 
-    # --- 5. TAB 2: MARKET LIVE (RICERCA SOLO QUI + FIX EMB.MI) ---
+    # --- 5. TAB 2: MARKET LIVE ---
     with tab_live:
-        # RICERCA SPOSTATA SOLO QUI
         with st.expander("🔍 Ricerca Codice Asset (Ticker Finder)"):
             q_search = st.text_input("Cerca Azione o ETF:", placeholder="Es: JPMorgan, Eni, Gold...")
             if q_search:
@@ -535,7 +517,8 @@ elif nav_selection == "📈 Mercati & Investimenti":
                     r = requests.get(f"https://query2.finance.yahoo.com/v1/finance/search?q={q_search}", headers=h).json()
                     for q in r.get("quotes", []):
                         st.markdown(f"**{q.get('symbol')}** | {q.get('shortname')} (*{q.get('exchange')}*)")
-                except: st.error("Errore ricerca.")
+                except:
+                    st.error("Errore ricerca.")
 
         st.subheader("💹 Monitoraggio Real-Time")
         t_list_input = st.text_input("Ticker Monitorati:", "JPM, EMB.MI")
@@ -547,20 +530,19 @@ elif nav_selection == "📈 Mercati & Investimenti":
             for i, sym in enumerate(list_t):
                 d_api = fetch_market_data(sym, duration="5d")
                 if d_api is not None and not d_api.empty:
-                    # FIX MULTI-INDEX PER MILANO/EMB.MI
                     if isinstance(d_api.columns, pd.MultiIndex):
                         d_api.columns = d_api.columns.get_level_values(0)
-                    
                     pz = d_api['Close'].dropna()
                     if len(pz) >= 2:
                         val, delta = float(pz.iloc[-1]), ((pz.iloc[-1]/pz.iloc[-2])-1)*100
                         with m_cols[i]:
                             st.metric(sym, f"{val:,.2f}", f"{delta:+.2f}%")
-                        # Dati base 100 per grafico
                         h_plot = fetch_market_data(sym, duration="1y")
-                        if h_plot is not None: df_comp[sym] = (h_plot['Close'] / h_plot['Close'].iloc[0]) * 100
+                        if h_plot is not None:
+                            df_comp[sym] = (h_plot['Close'] / h_plot['Close'].iloc[0]) * 100
                 else:
-                    with m_cols[i]: st.error(f"N/D {sym}")
+                    with m_cols[i]:
+                        st.error(f"N/D {sym}")
             
             if not df_comp.empty:
                 st.line_chart(df_comp)
@@ -593,9 +575,12 @@ elif nav_selection == "📈 Mercati & Investimenti":
                 if h is not None and len(h) >= 200:
                     ma50, ma200, cur = h['Close'].rolling(50).mean().iloc[-1], h['Close'].rolling(200).mean().iloc[-1], h['Close'].iloc[-1]
                     with st.expander(f"Analisi Tecnica: {s}", expanded=True):
-                        if cur > ma50 > ma200: st.success("🚀 Trend: Fortemente Rialzista (Golden Cross)")
-                        elif cur < ma50: st.error("⚠️ Trend: Ribassista / Correzione")
-                        else: st.warning("⚖️ Trend: Laterale / Consolidamento")
+                        if cur > ma50 > ma200:
+                            st.success("🚀 Trend: Fortemente Rialzista (Golden Cross)")
+                        elif cur < ma50:
+                            st.error("⚠️ Trend: Ribassista / Correzione")
+                        else:
+                            st.warning("⚖️ Trend: Laterale / Consolidamento")
 
     # --- 8. TAB 5: OBIETTIVO FIRE & DELETE NET WORTH ---
     with tab_fire:
@@ -642,20 +627,21 @@ elif nav_selection == "🛠️ Strumenti & Setup":
         st.subheader("Gestione Record Database")
         st.warning("Attenzione: Le modifiche al database sono irreversibili.")
         
-        conn = connect_to_db()
-        df_all = pd.read_sql_query("SELECT * FROM storico ORDER BY data DESC", conn)
-        conn.close()
+        try:
+            supabase = connect_to_db()
+            result = supabase.table("storico").select("id, data, risparmio, capitale").order("data", desc=True).execute()
+            df_all = pd.DataFrame(result.data)
+        except Exception as e:
+            st.error(f"Errore: {e}")
+            df_all = pd.DataFrame()
         
         if not df_all.empty:
             st.write("Seleziona ID da rimuovere:")
             record_to_del = st.selectbox("ID Record", options=df_all['id'].tolist())
             if st.button("🗑️ Elimina Record Selezionato"):
                 try:
-                    conn = connect_to_db()
-                    c = conn.cursor()
-                    c.execute("DELETE FROM storico WHERE id = ?", (record_to_del,))
-                    conn.commit()
-                    conn.close()
+                    supabase = connect_to_db()
+                    supabase.table("storico").delete().eq("id", record_to_del).execute()
                     st.success(f"Record {record_to_del} eliminato con successo.")
                     st.rerun()
                 except Exception as e:
@@ -682,3 +668,4 @@ elif nav_selection == "🛠️ Strumenti & Setup":
 # ==============================================================================
 # FINE DELL'APPLICATIVO - TERMINAL FINANZIARIO v4.0
 # ==============================================================================
+
