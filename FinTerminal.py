@@ -241,22 +241,16 @@ if "user" not in st.session_state:
                 st.warning("Compila tutti i campi.")
 
     with reset_tab:
-        st.subheader("Recupera la tua password")
-        st.markdown("Inserisci la tua email e ti invieremo un link per reimpostare la password.")
-        reset_email = st.text_input("Email", key="reset_email")
-        if st.button("Invia email di recupero", type="primary", use_container_width=True):
-            if reset_email:
-                try:
-                    supabase = connect_to_db()
-                    supabase.auth.reset_password_email(
-                        reset_email,
-                        options={"redirect_to": "https://finterminal.streamlit.app"}
-                    )
-                    st.success("✅ Email inviata! Controlla la tua casella di posta.")
-                except Exception as e:
-                    st.error(f"Errore nell'invio: {e}")
-            else:
-                st.warning("Inserisci la tua email.")
+        st.subheader("🔓 Password dimenticata")
+        st.info("""
+        **Come reimpostare la password:**
+        
+        Contatta l'amministratore dell'app indicando la tua email registrata.
+        
+        📧 **Scrivi a:** cosimodevita1@gmail.com
+        
+        La password verrà reimpostata entro 24 ore.
+        """)
 
     st.stop()
 
