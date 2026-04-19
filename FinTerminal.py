@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 # Il layout 'wide' è essenziale per visualizzare correttamente i grafici affiancati.
 
 st.set_page_config(
+    
     page_title="Terminal Finanziario Avanzato v4.0",
     page_icon="💸",
     layout="wide",
@@ -226,6 +227,8 @@ if "user" not in st.session_state:
                     success, error = register(reg_email, reg_password)
                     if success:
                         st.success("Account creato! Controlla la tua email per confermare la registrazione.")
+                        st.session_state["show_login"] = True
+                        st.rerun()
                     else:
                         st.error(f"Errore: {error}")
             else:
