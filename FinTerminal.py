@@ -522,14 +522,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
         t_list_input = st.text_input("Ticker Monitorati:", "JPM, EMB.MI")
         list_t = [x.strip().upper() for x in t_list_input.split(",") if x.strip()]
         
-        # DEBUG TEMPORANEO - rimuovere dopo
-        if st.button("🔍 Debug EMB.MI"):
-            import yfinance as yf
-            ticker = yf.Ticker("EMB.MI")
-            hist = ticker.history(period="5d")
-            st.write("Columns:", hist.columns.tolist())
-            st.write("Shape:", hist.shape)
-            st.write(hist.tail())
         
         if list_t:
             m_cols = st.columns(len(list_t))
