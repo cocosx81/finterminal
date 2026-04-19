@@ -13,12 +13,17 @@ from datetime import datetime, timedelta
 # Il layout 'wide' è essenziale per visualizzare correttamente i grafici affiancati.
 
 st.set_page_config(
-    
     page_title="Terminal Finanziario Avanzato v4.0",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+st.markdown("""
+    <style>
+    .stSpinner { display: none; }
+    </style>
+""", unsafe_allow_html=True)
 
 # Iniezione di CSS personalizzato per la personalizzazione della UI.
 # Abbiamo rimosso il badge finale e ottimizzato i contenitori grafici.
@@ -223,6 +228,8 @@ if "user" not in st.session_state:
                     st.error("Le password non coincidono.")
                 elif len(reg_password) < 6:
                     st.error("La password deve essere di almeno 6 caratteri.")
+                elif not any(c in "!@#$%^&*()_+-=[]{}|;':\",./<>?" for c in reg_password):
+                    st.error("La password deve contenere almeno un carattere speciale (!@#$%^&*...).")
                 else:
                     success, error = register(reg_email, reg_password)
                     if success:
