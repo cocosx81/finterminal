@@ -201,7 +201,7 @@ if "user" not in st.session_state:
     st.title("🏦 FinTerminal v4")
     st.markdown("---")
     
-    login_tab, register_tab = st.tabs(["🔑 Accedi", "📝 Registrati"])
+    login_tab, register_tab, reset_tab = st.tabs(["🔑 Accedi", "📝 Registrati", "🔓 Password dimenticata"])
     
     with login_tab:
         st.subheader("Accedi al tuo account")
@@ -216,7 +216,7 @@ if "user" not in st.session_state:
                     st.error("Email o password errati.")
             else:
                 st.warning("Inserisci email e password.")
-    
+
     with register_tab:
         st.subheader("Crea un nuovo account")
         reg_email = st.text_input("Email", key="reg_email")
@@ -233,21 +233,37 @@ if "user" not in st.session_state:
                 else:
                     success, error = register(reg_email, reg_password)
                     if success:
-                        st.success("Account creato! Controlla la tua email per confermare la registrazione.")
-                        st.session_state["show_login"] = True
-                        st.rerun()
+                        st.success("✅ Account creato! Controlla la tua email per confermare.")
+                        st.info("👆 Clicca su **Accedi** per entrare dopo la conferma.")
                     else:
                         st.error(f"Errore: {error}")
             else:
                 st.warning("Compila tutti i campi.")
-    
+
+    with reset_tab:
+        st.subheader("Recupera la tua password")
+        st.markdown("Inserisci la tua email e ti invieremo un link per reimpostare la password.")
+        reset_email = st.text_input("Email", key="reset_email")
+        if st.button("Invia email di recupero", type="primary", use_container_width=True):
+            if reset_email:
+                try:
+                    supabase = connect_to_db()
+                    supabase.auth.reset_password_email(
+                        reset_email,
+                        options={"redirect_to": "https://cocosx81-finterminal.streamlit.app"}
+                    )
+                    st.success("✅ Email inviata! Controlla la tua casella di posta.")
+                except Exception as e:
+                    st.error(f"Errore nell'invio: {e}")
+            else:
+                st.warning("Inserisci la tua email.")
+
     st.stop()
 
 # Sidebar solo se autenticato
 with st.sidebar:
     st.title("🏦 FinTerminal v4")
     
-    # Info utente
     user = get_current_user()
     st.markdown(f"👤 **{user.email}**")
     if st.button("🚪 Logout", use_container_width=True):
