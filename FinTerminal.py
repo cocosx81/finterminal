@@ -540,8 +540,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
                     if d_api is not None and not d_api.empty:
                         if isinstance(d_api.columns, pd.MultiIndex):
                             d_api.columns = d_api.columns.get_level_values(0)
-                        if 'Close' not in d_api.columns:
-                            d_api.columns = [c[0] if isinstance(c, tuple) else c for c in d_api.columns]
                         pz = d_api['Close'].dropna()
                         if len(pz) >= 2:
                             val, delta = float(pz.iloc[-1]), ((pz.iloc[-1]/pz.iloc[-2])-1)*100
@@ -553,18 +551,21 @@ elif nav_selection == "📈 Mercati & Investimenti":
                                     h_plot.columns = h_plot.columns.get_level_values(0)
                                 close_series = h_plot['Close'].dropna()
                                 if len(close_series) > 0:
-                                    df_comp[sym] = (close_series / close_series.iloc[0]) * 100
+                                    normalized = (close_series / close_series.iloc[0]) * 100
+                                    normalized.index = normalized.index.tz_localize(None)
+                                    df_comp[sym] = normalized
                         else:
                             with m_cols[i]:
                                 st.error(f"N/D {sym}")
                     else:
                         with m_cols[i]:
                             st.error(f"N/D {sym}")
-                except Exception as e:
+                except Exception:
                     with m_cols[i]:
                         st.error(f"N/D {sym}")
             
             if not df_comp.empty:
+                df_comp = df_comp.fillna(method='ffill').dropna(how='all')
                 st.line_chart(df_comp)
 
     # --- 6. TAB 3: SCANNER E ANALISI COMPARATIVA ---
