@@ -460,7 +460,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
         st.divider()
         st.subheader("📜 Storico Operazioni Recenti")
         
-        # Inizializzazione stato per conferma cancellazione
         if "confirm_delete_id" not in st.session_state:
             st.session_state.confirm_delete_id = None
 
@@ -481,7 +480,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
                         if st.button("🗑️", key=f"del_tr_{row['id']}"):
                             st.session_state.confirm_delete_id = row['id']
 
-                # Pop-up di conferma
                 if st.session_state.confirm_delete_id is not None:
                     target_id = st.session_state.confirm_delete_id
                     row_info = df_ops[df_ops['id'] == target_id].iloc[0]
@@ -528,19 +526,32 @@ elif nav_selection == "📈 Mercati & Investimenti":
             m_cols = st.columns(len(list_t))
             df_comp = pd.DataFrame()
             for i, sym in enumerate(list_t):
-                d_api = fetch_market_data(sym, duration="5d")
-                if d_api is not None and not d_api.empty:
-                    if isinstance(d_api.columns, pd.MultiIndex):
-                        d_api.columns = d_api.columns.get_level_values(0)
-                    pz = d_api['Close'].dropna()
-                    if len(pz) >= 2:
-                        val, delta = float(pz.iloc[-1]), ((pz.iloc[-1]/pz.iloc[-2])-1)*100
+                try:
+                    d_api = fetch_market_data(sym, duration="5d")
+                    if d_api is not None and not d_api.empty:
+                        if isinstance(d_api.columns, pd.MultiIndex):
+                            d_api.columns = d_api.columns.get_level_values(0)
+                        if 'Close' not in d_api.columns:
+                            d_api.columns = [c[0] if isinstance(c, tuple) else c for c in d_api.columns]
+                        pz = d_api['Close'].dropna()
+                        if len(pz) >= 2:
+                            val, delta = float(pz.iloc[-1]), ((pz.iloc[-1]/pz.iloc[-2])-1)*100
+                            with m_cols[i]:
+                                st.metric(sym, f"{val:,.2f}", f"{delta:+.2f}%")
+                            h_plot = fetch_market_data(sym, duration="1y")
+                            if h_plot is not None and not h_plot.empty:
+                                if isinstance(h_plot.columns, pd.MultiIndex):
+                                    h_plot.columns = h_plot.columns.get_level_values(0)
+                                close_series = h_plot['Close'].dropna()
+                                if len(close_series) > 0:
+                                    df_comp[sym] = (close_series / close_series.iloc[0]) * 100
+                        else:
+                            with m_cols[i]:
+                                st.error(f"N/D {sym}")
+                    else:
                         with m_cols[i]:
-                            st.metric(sym, f"{val:,.2f}", f"{delta:+.2f}%")
-                        h_plot = fetch_market_data(sym, duration="1y")
-                        if h_plot is not None:
-                            df_comp[sym] = (h_plot['Close'] / h_plot['Close'].iloc[0]) * 100
-                else:
+                            st.error(f"N/D {sym}")
+                except Exception as e:
                     with m_cols[i]:
                         st.error(f"N/D {sym}")
             
@@ -555,12 +566,17 @@ elif nav_selection == "📈 Mercati & Investimenti":
                 targets = ["JPM", "EMB.MI", "VWCE.DE", "VUSA.DE", "BTC-USD", "GC=F", "AAPL", "NVDA", "ISP.MI"]
                 res_scan = []
                 for t in targets:
-                    h = fetch_market_data(t, duration="1y")
-                    if h is not None and len(h) > 20:
-                        pz = h['Close'].dropna()
-                        ret = ((pz.iloc[-1]/pz.iloc[0])-1)*100
-                        vol = pz.pct_change().std() * np.sqrt(252) * 100
-                        res_scan.append({"Asset": t, "Rendimento %": ret, "Volatilità %": vol, "Score": ret/vol})
+                    try:
+                        h = fetch_market_data(t, duration="1y")
+                        if h is not None and len(h) > 20:
+                            if isinstance(h.columns, pd.MultiIndex):
+                                h.columns = h.columns.get_level_values(0)
+                            pz = h['Close'].dropna()
+                            ret = ((pz.iloc[-1]/pz.iloc[0])-1)*100
+                            vol = pz.pct_change().std() * np.sqrt(252) * 100
+                            res_scan.append({"Asset": t, "Rendimento %": ret, "Volatilità %": vol, "Score": ret/vol})
+                    except:
+                        pass
                 if res_scan:
                     df_res = pd.DataFrame(res_scan).sort_values("Score", ascending=False)
                     st.dataframe(df_res.head(20), use_container_width=True)
@@ -571,32 +587,43 @@ elif nav_selection == "📈 Mercati & Investimenti":
         st.subheader("🤖 Analisi Algoritmica AI")
         if st.button("🧠 GENERA REPORT"):
             for s in list_t:
-                h = fetch_market_data(s, duration="250d")
-                if h is not None and len(h) >= 200:
-                    ma50, ma200, cur = h['Close'].rolling(50).mean().iloc[-1], h['Close'].rolling(200).mean().iloc[-1], h['Close'].iloc[-1]
-                    with st.expander(f"Analisi Tecnica: {s}", expanded=True):
-                        if cur > ma50 > ma200:
-                            st.success("🚀 Trend: Fortemente Rialzista (Golden Cross)")
-                        elif cur < ma50:
-                            st.error("⚠️ Trend: Ribassista / Correzione")
-                        else:
-                            st.warning("⚖️ Trend: Laterale / Consolidamento")
+                try:
+                    h = fetch_market_data(s, duration="250d")
+                    if h is not None and len(h) >= 200:
+                        if isinstance(h.columns, pd.MultiIndex):
+                            h.columns = h.columns.get_level_values(0)
+                        ma50 = h['Close'].rolling(50).mean().iloc[-1]
+                        ma200 = h['Close'].rolling(200).mean().iloc[-1]
+                        cur = h['Close'].iloc[-1]
+                        with st.expander(f"Analisi Tecnica: {s}", expanded=True):
+                            if cur > ma50 > ma200:
+                                st.success("🚀 Trend: Fortemente Rialzista (Golden Cross)")
+                            elif cur < ma50:
+                                st.error("⚠️ Trend: Ribassista / Correzione")
+                            else:
+                                st.warning("⚖️ Trend: Laterale / Consolidamento")
+                except:
+                    pass
 
-    # --- 8. TAB 5: OBIETTIVO FIRE & DELETE NET WORTH ---
+    # --- 8. TAB 5: OBIETTIVO FIRE ---
     with tab_fire:
         st.subheader("🏝️ Financial Independence Plan")
         with st.expander("📊 Gestione Record Net Worth (Dashboard)"):
             try:
-                conn = connect_to_db()
-                df_nw = pd.read_sql_query("SELECT rowid, data, capitale FROM storico ORDER BY data DESC LIMIT 20", conn)
-                conn.close()
-                for _, r in df_nw.iterrows():
-                    c1, c2, c3 = st.columns([4, 4, 2])
-                    c1.write(r['data']); c2.write(f"**{r['capitale']:,.2f} €**")
-                    if c3.button("Elimina", key=f"del_nw_{r['rowid']}"):
-                        conn = connect_to_db(); conn.execute(f"DELETE FROM storico WHERE rowid = {r['rowid']}")
-                        conn.commit(); conn.close(); st.rerun()
-            except: pass
+                supabase = connect_to_db()
+                result = supabase.table("storico").select("id, data, capitale").order("data", desc=True).limit(20).execute()
+                df_nw = pd.DataFrame(result.data)
+                if not df_nw.empty:
+                    for _, r in df_nw.iterrows():
+                        c1, c2, c3 = st.columns([4, 4, 2])
+                        c1.write(r['data'])
+                        c2.write(f"**{r['capitale']:,.2f} €**")
+                        if c3.button("Elimina", key=f"del_nw_{r['id']}"):
+                            supabase = connect_to_db()
+                            supabase.table("storico").delete().eq("id", r['id']).execute()
+                            st.rerun()
+            except Exception as e:
+                st.error(f"Errore: {e}")
         
         # Logica FIRE
         cf1, cf2 = st.columns(2)
@@ -612,7 +639,6 @@ elif nav_selection == "📈 Mercati & Investimenti":
             st.markdown(f"### FIRE Number: **{f_t:,.0f} €**")
 
 # --- FINE MODULO 7 ---
-
                
 # ==============================================================================
 # 8. MODULO: STRUMENTI & SETUP (PAGINA 4)
