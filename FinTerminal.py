@@ -565,7 +565,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
                         st.error(f"N/D {sym}")
             
             if not df_comp.empty:
-                df_comp = df_comp.fillna(method='ffill').dropna(how='all')
+                df_comp = df_comp.ffill().dropna(how='all')
                 st.line_chart(df_comp)
 
     # --- 6. TAB 3: SCANNER E ANALISI COMPARATIVA ---
