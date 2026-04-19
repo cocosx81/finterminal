@@ -250,7 +250,7 @@ if "user" not in st.session_state:
                     supabase = connect_to_db()
                     supabase.auth.reset_password_email(
                         reset_email,
-                        options={"redirect_to": "https://cocosx81-finterminal.streamlit.app"}
+                        options={"redirect_to": "https://finterminal.streamlit.app"}
                     )
                     st.success("✅ Email inviata! Controlla la tua casella di posta.")
                 except Exception as e:
