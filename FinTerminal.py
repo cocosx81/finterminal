@@ -428,7 +428,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
             col1, col2, col3 = st.columns(3)
             with col1:
                 f_date = st.date_input("Data", datetime.now())
-                f_ticker = st.text_input("Ticker Asset (es. JPM, EMB.MI)", "JPM").upper().strip()
+                f_ticker = st.text_input("Ticker Asset (es. JPM, IEMB.MI)", "JPM").upper().strip()
             with col2:
                 f_type = st.selectbox("Tipo", ["Acquisto", "Vendita", "Dividendo", "Risparmio Mensile", "Tasse"])
                 f_val = st.number_input("Importo (€)", min_value=0.0, format="%.2f")
@@ -519,7 +519,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
                     st.error("Errore ricerca.")
 
         st.subheader("💹 Monitoraggio Real-Time")
-        t_list_input = st.text_input("Ticker Monitorati:", "JPM, EMB.MI")
+        t_list_input = st.text_input("Ticker Monitorati:", "JPM, IEMB.MI")
         list_t = [x.strip().upper() for x in t_list_input.split(",") if x.strip()]
         
         
@@ -565,7 +565,7 @@ elif nav_selection == "📈 Mercati & Investimenti":
         st.subheader("🏆 Scanner Strategico PAC")
         if st.button("🚀 AVVIA SCANSIONE"):
             with st.spinner("Analisi volatilità/rendimento..."):
-                targets = ["JPM", "EMB.MI", "VWCE.DE", "VUSA.DE", "BTC-USD", "GC=F", "AAPL", "NVDA", "ISP.MI"]
+                targets = ["JPM", "IEMB.MI", "VWCE.DE", "VUSA.DE", "BTC-USD", "GC=F", "AAPL", "NVDA", "ISP.MI"]
                 res_scan = []
                 for t in targets:
                     try:
