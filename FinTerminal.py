@@ -72,13 +72,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. STRATO DI PERSISTENZA: GESTIONE DATABASE SQLITE
-# ==============================================================================
-# Utilizziamo sqlite3 per garantire che i dati dell'utente rimangano locali.
-# La connessione è configurata per gestire thread multipli in ambiente Streamlit.
-
-# ==============================================================================
-# 2. STRATO DI PERSISTENZA: CONNESSIONE SUPABASE
+# 2. STRATO DI PERSISTENZA: CONNESSIONE SUPABASE + AUTENTICAZIONE
 # ==============================================================================
 from supabase import create_client
 
@@ -89,9 +83,40 @@ def connect_to_db():
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-# ==============================================================================
-# 3. LIBRERIA DI FUNZIONI TECNICHE & LOGICA DI CALCOLO
-# ==============================================================================
+def get_current_user():
+    """Recupera l'utente corrente dalla session_state."""
+    return st.session_state.get("user", None)
+
+def login(email, password):
+    """Effettua il login con email e password."""
+    try:
+        supabase = connect_to_db()
+        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        st.session_state["user"] = response.user
+        st.session_state["access_token"] = response.session.access_token
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def register(email, password):
+    """Registra un nuovo utente."""
+    try:
+        supabase = connect_to_db()
+        response = supabase.auth.sign_up({"email": email, "password": password})
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def logout():
+    """Effettua il logout."""
+    try:
+        supabase = connect_to_db()
+        supabase.auth.sign_out()
+    except:
+        pass
+    st.session_state.pop("user", None)
+    st.session_state.pop("access_token", None)
+    st.rerun()
 
 # ==============================================================================
 # 3. LIBRERIA DI FUNZIONI TECNICHE & LOGICA DI CALCOLO
@@ -100,12 +125,19 @@ def connect_to_db():
 def update_setting(key, value):
     """Aggiorna o inserisce un parametro di configurazione nel DB."""
     supabase = connect_to_db()
-    supabase.table("impostazioni").upsert({"chiave": key, "valore": float(value)}).execute()
+    user = get_current_user()
+    user_id = user.id if user else "anonymous"
+    supabase.table("impostazioni").upsert({
+        "chiave": f"{user_id}_{key}",
+        "valore": float(value)
+    }).execute()
 
 def fetch_setting(key, default_val):
     """Recupera un parametro di configurazione specifico dal DB."""
     supabase = connect_to_db()
-    result = supabase.table("impostazioni").select("valore").eq("chiave", key).execute()
+    user = get_current_user()
+    user_id = user.id if user else "anonymous"
+    result = supabase.table("impostazioni").select("valore").eq("chiave", f"{user_id}_{key}").execute()
     if result.data:
         return result.data[0]["valore"]
     return default_val
@@ -158,11 +190,61 @@ def fetch_market_data(ticker_symbol, duration="1y"):
 # 4. ARCHITETTURA DELLA SIDEBAR E NAVIGAZIONE
 # ==============================================================================
 
-with st.sidebar:
+# Schermata di Login/Registrazione se non autenticato
+if "user" not in st.session_state:
     st.title("🏦 FinTerminal v4")
     st.markdown("---")
     
-    # Sistema di navigazione principale
+    login_tab, register_tab = st.tabs(["🔑 Accedi", "📝 Registrati"])
+    
+    with login_tab:
+        st.subheader("Accedi al tuo account")
+        login_email = st.text_input("Email", key="login_email")
+        login_password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Accedi", type="primary", use_container_width=True):
+            if login_email and login_password:
+                success, error = login(login_email, login_password)
+                if success:
+                    st.rerun()
+                else:
+                    st.error("Email o password errati.")
+            else:
+                st.warning("Inserisci email e password.")
+    
+    with register_tab:
+        st.subheader("Crea un nuovo account")
+        reg_email = st.text_input("Email", key="reg_email")
+        reg_password = st.text_input("Password", type="password", key="reg_password")
+        reg_password2 = st.text_input("Conferma Password", type="password", key="reg_password2")
+        if st.button("Registrati", type="primary", use_container_width=True):
+            if reg_email and reg_password and reg_password2:
+                if reg_password != reg_password2:
+                    st.error("Le password non coincidono.")
+                elif len(reg_password) < 6:
+                    st.error("La password deve essere di almeno 6 caratteri.")
+                else:
+                    success, error = register(reg_email, reg_password)
+                    if success:
+                        st.success("Account creato! Controlla la tua email per confermare la registrazione.")
+                    else:
+                        st.error(f"Errore: {error}")
+            else:
+                st.warning("Compila tutti i campi.")
+    
+    st.stop()
+
+# Sidebar solo se autenticato
+with st.sidebar:
+    st.title("🏦 FinTerminal v4")
+    
+    # Info utente
+    user = get_current_user()
+    st.markdown(f"👤 **{user.email}**")
+    if st.button("🚪 Logout", use_container_width=True):
+        logout()
+    
+    st.markdown("---")
+    
     nav_selection = st.radio(
         "Menu Principale",
         [
@@ -174,7 +256,6 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    # Widget Informativi Rapidi
     st.subheader("🌐 Stato Sistemi")
     st.status("Database Engine: OK", state="complete")
     st.status("Yahoo Finance API: Live", state="complete")
@@ -182,7 +263,6 @@ with st.sidebar:
     if st.button("🗑️ Svuota Cache Dati"):
         st.cache_data.clear()
         st.rerun()
-
 # ==============================================================================
 # 5. MODULO: DASHBOARD PATRIMONIALE (PAGINA 1)
 # ==============================================================================
@@ -191,7 +271,8 @@ if nav_selection == "📊 Dashboard Patrimoniale":
     st.title("📊 Riepilogo Esecutivo del Patrimonio")
     
     supabase = connect_to_db()
-    result = supabase.table("storico").select("data, risparmio, capitale").order("data", desc=False).execute()
+    user = get_current_user()
+    result = supabase.table("storico").select("data, risparmio, capitale").eq("user_id", user.id).order("data", desc=False).execute()
     df_history = pd.DataFrame(result.data)
     
     if not df_history.empty:
@@ -240,7 +321,8 @@ if nav_selection == "📊 Dashboard Patrimoniale":
         with st.expander("🔍 Visualizza Dettaglio Tabellare", expanded=True):
             try:
                 supabase = connect_to_db()
-                result = supabase.table("storico").select("id, data, risparmio, capitale").order("data", desc=True).execute()
+                user = get_current_user()
+                result = supabase.table("storico").select("id, data, risparmio, capitale").eq("user_id", user.id).order("data", desc=True).execute()
                 df_detail = pd.DataFrame(result.data)
 
                 if not df_detail.empty:
@@ -440,17 +522,20 @@ elif nav_selection == "📈 Mercati & Investimenti":
             if st.form_submit_button("✅ ARCHIVIA E SINCRONIZZA DATABASE"):
                 try:
                     supabase = connect_to_db()
+                    user = get_current_user()
                     supabase.table("transazioni").insert({
                         "data": f_date.strftime("%Y-%m-%d"),
                         "asset": f_ticker,
                         "piattaforma": f_broker,
                         "importo": f_val,
-                        "tipo": f_type
+                        "tipo": f_type,
+                        "user_id": user.id
                     }).execute()
                     supabase.table("storico").upsert({
                         "data": f_date.strftime("%Y-%m-%d"),
                         "risparmio": f_val if f_type == "Risparmio Mensile" else 0,
-                        "capitale": f_nw
+                        "capitale": f_nw,
+                        "user_id": user.id
                     }).execute()
                     st.success(f"Dati per {f_ticker} salvati correttamente.")
                     st.rerun()
@@ -465,7 +550,8 @@ elif nav_selection == "📈 Mercati & Investimenti":
 
         try:
             supabase = connect_to_db()
-            result = supabase.table("transazioni").select("id, data, asset, piattaforma, importo, tipo").order("data", desc=True).limit(40).execute()
+            user = get_current_user()
+            result = supabase.table("transazioni").select("id, data, asset, piattaforma, importo, tipo").eq("user_id", user.id).order("data", desc=True).limit(40).execute()
             df_ops = pd.DataFrame(result.data)
 
             if not df_ops.empty:
@@ -613,7 +699,8 @@ elif nav_selection == "📈 Mercati & Investimenti":
         with st.expander("📊 Gestione Record Net Worth (Dashboard)"):
             try:
                 supabase = connect_to_db()
-                result = supabase.table("storico").select("id, data, capitale").order("data", desc=True).limit(20).execute()
+                user = get_current_user()
+                result = supabase.table("storico").select("id, data, capitale").eq("user_id", user.id).order("data", desc=True).limit(20).execute()
                 df_nw = pd.DataFrame(result.data)
                 if not df_nw.empty:
                     for _, r in df_nw.iterrows():
@@ -657,7 +744,8 @@ elif nav_selection == "🛠️ Strumenti & Setup":
         
         try:
             supabase = connect_to_db()
-            result = supabase.table("storico").select("id, data, risparmio, capitale").order("data", desc=True).execute()
+            user = get_current_user()
+            result = supabase.table("storico").select("id, data, risparmio, capitale").eq("user_id", user.id).order("data", desc=True).execute()
             df_all = pd.DataFrame(result.data)
         except Exception as e:
             st.error(f"Errore: {e}")
