@@ -401,19 +401,21 @@ elif nav_selection == "🏠 Analisi Immobiliare":
     st.markdown("Strumento di simulazione per pianificare l'acquisto della casa e l'impatto del debito.")
     
     # Recupero parametri salvati
-    saved_prezzo = fetch_setting("house_price", 160000.0)
-    saved_acconto = fetch_setting("house_downpayment", 40000.0)
-    saved_stipendio = fetch_setting("user_income", 1900.0)
+    try:
+        saved_prezzo = fetch_setting("house_price", 160000.0)
+        saved_acconto = fetch_setting("house_downpayment", 40000.0)
+        saved_stipendio = fetch_setting("user_income", 1900.0)
+    except:
+        saved_prezzo = 160000.0
+        saved_acconto = 40000.0
+        saved_stipendio = 1900.0
     
     col_input1, col_input2, col_input3 = st.columns(3)
     
     with col_input1:
         st.subheader("📍 Dati Immobile")
-        prezzo_casa = st.number_input("Prezzo Acquisto stimato (€)", value=saved_prezzo, step=5000.0)
-        if prezzo_casa != saved_prezzo: update_setting("house_price", prezzo_casa)
-        
-        acconto = st.number_input("Capitale Proprio (Acconto) (€)", value=saved_acconto, step=2000.0)
-        if acconto != saved_acconto: update_setting("house_downpayment", acconto)
+        prezzo_casa = st.number_input("Prezzo Acquisto stimato (€)", value=float(saved_prezzo), step=5000.0)
+        acconto = st.number_input("Capitale Proprio (Acconto) (€)", value=float(saved_acconto), step=2000.0)
         
     with col_input2:
         st.subheader("🏦 Parametri Finanziari")
@@ -422,8 +424,17 @@ elif nav_selection == "🏠 Analisi Immobiliare":
         
     with col_input3:
         st.subheader("👤 Profilo Reddituale")
-        stipendio_netto = st.number_input("Stipendio Mensile Netto (€)", value=saved_stipendio)
-        if stipendio_netto != saved_stipendio: update_setting("user_income", stipendio_netto)
+        stipendio_netto = st.number_input("Stipendio Mensile Netto (€)", value=float(saved_stipendio))
+
+    # Bottone salva impostazioni
+    if st.button("💾 Salva Impostazioni", type="primary"):
+        try:
+            update_setting("house_price", prezzo_casa)
+            update_setting("house_downpayment", acconto)
+            update_setting("user_income", stipendio_netto)
+            st.success("Impostazioni salvate!")
+        except Exception as e:
+            st.error(f"Errore nel salvataggio: {e}")
 
     # Logica di calcolo avanzata
     importo_mutuo = prezzo_casa - acconto
@@ -432,7 +443,7 @@ elif nav_selection == "🏠 Analisi Immobiliare":
     
     st.divider()
     
-    # Display Risultati con design a schede
+    # Display Risultati
     res_col1, res_col2, res_col3 = st.columns(3)
     
     with res_col1:
@@ -444,7 +455,7 @@ elif nav_selection == "🏠 Analisi Immobiliare":
         totale_interessi = (rata_mensile * anni_mutuo * 12) - importo_mutuo
         st.metric("Totale Interessi Passivi", f"{totale_interessi:,.0f} €")
         
-    # Analisi Proiettiva: Il costo dell'attesa
+    # Analisi Proiettiva
     st.subheader("🔮 Simulazione d'Attesa")
     anni_attesa = st.slider("Se aspetti a comprare (Anni):", 1, 10, 3)
     inflazione_immobiliare = st.slider("Crescita annua prezzi casa (%):", 0.0, 5.0, 2.0)
@@ -452,7 +463,7 @@ elif nav_selection == "🏠 Analisi Immobiliare":
     prezzo_futuro = prezzo_casa * (1 + inflazione_immobiliare/100)**anni_attesa
     st.write(f"Tra {anni_attesa} anni, la stessa casa potrebbe costare circa **{prezzo_futuro:,.0f} €**.")
     
-    # Tabella Ammortamento (Prime rate)
+    # Tabella Ammortamento
     with st.expander("📊 Vedi Piano di Ammortamento (Primi 12 mesi)"):
         piano = []
         residuo = importo_mutuo
